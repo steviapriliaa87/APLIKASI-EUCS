@@ -1,23 +1,16 @@
-# app.py
 import streamlit as st
 import pandas as pd
-import numpy as np
 import joblib
-
 from pathlib import Path
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
 
 # =========================
 # CONFIG
 # =========================
-st.set_page_config(
-    page_title="Comment Sentiment & EUCS Dashboard",
-    layout="wide"
-)
+st.set_page_config(page_title="Comment Sentiment & EUCS Dashboard", layout="wide")
 
 DIMS = ["Content", "Accuracy", "Format", "Ease_of_Use", "Timeliness"]
 SENTIMENT_MAP = {"negative": 1, "neutral": 2, "positive": 3}
-
 BASE_DIR = Path(__file__).resolve().parent
 
 # =========================
@@ -25,13 +18,7 @@ BASE_DIR = Path(__file__).resolve().parent
 # =========================
 @st.cache_resource
 def load_eucs_model():
-    """
-    PENTING:
-    - Kalau eucs_model.pkl sefolder sama app.py -> pakai baris default.
-    - Kalau file kamu ada di folder GUI/ -> uncomment baris GUI.
-    """
     model_path = BASE_DIR / "eucs_model.pkl"
-    # model_path = BASE_DIR / "GUI" / "eucs_model.pkl"
     return joblib.load(model_path)
 
 @st.cache_resource
@@ -46,7 +33,7 @@ def load_sentiment_pipe():
         tokenizer=tok,
         truncation=True,
         max_length=512,
-        device=-1  # CPU biar stabil
+        device=-1  # CPU
     )
     return pipe, mdl
 
@@ -56,38 +43,28 @@ sentiment_pipe, sentiment_mdl = load_sentiment_pipe()
 # =========================
 # HELPERS
 # =========================
-def normalize_sent_label(raw_label: str, mdl) -> str:
-    """
-    Antisipasi 2 kemungkinan output:
-    - 'positive'/'neutral'/'negative'
-    - 'LABEL_0' dst -> dikonversi pakai id2label model
-    """
+def normalize_sent_label(raw_label: str) -> str:
     lab = str(raw_label).lower()
     if lab.startswith("label_"):
         try:
             idx = int(lab.split("_")[-1])
-            return str(mdl.config.id2label[idx]).lower()
+            return str(sentiment_mdl.config.id2label[idx]).lower()
         except Exception:
             return lab
     return lab
 
 def predict_eucs(texts):
-    pred = model_eucs.predict(texts)  # array 0/1 shape (n,5)
+    pred = model_eucs.predict(texts)  # (n, 5) 0/1
     pred_df = pd.DataFrame(pred, columns=DIMS)
-
-    labels = pred_df.apply(
-        lambda row: [d for d in DIMS if int(row[d]) == 1],
-        axis=1
-    ).tolist()
+    labels = pred_df.apply(lambda r: [d for d in DIMS if int(r[d]) == 1], axis=1).tolist()
     return pred_df, labels
 
 def predict_sentiment(texts):
     preds = sentiment_pipe(texts, batch_size=16)
-
-    labels = [normalize_sent_label(p["label"], sentiment_mdl) for p in preds]
+    labels = [normalize_sent_label(p["label"]) for p in preds]
     out = pd.DataFrame({
         "label_sentimen": labels,
-        "confidence_score": [float(p["score"]) for p in preds]
+        "confidence_score": [float(p["score"]) for p in preds],
     })
     out["sentiment_score"] = out["label_sentimen"].map(SENTIMENT_MAP).fillna(2).astype(int)
     return out
@@ -101,7 +78,6 @@ RECO_RULES = {
 }
 
 def build_recommendations(sent_label, eucs_labels):
-    # rekomendasi hanya kalau NEGATIVE
     if sent_label != "negative":
         return []
     recs = [RECO_RULES[d] for d in eucs_labels if d in RECO_RULES]
@@ -114,14 +90,8 @@ def build_recommendations(sent_label, eucs_labels):
 # =========================
 st.title("💬 Comment Sentiment & EUCS Analysis Dashboard")
 
-mode = st.sidebar.selectbox(
-    "Choose Analysis Type",
-    ["Single Comment Analysis", "Batch Analysis (Excel/CSV)"]
-)
+mode = st.sidebar.selectbox("Choose Analysis Type", ["Single Comment Analysis", "Batch Analysis (Excel/CSV)"])
 
-# =========================
-# SINGLE COMMENT
-# =========================
 if mode == "Single Comment Analysis":
     st.subheader("🔎 Single Comment Analysis")
     text = st.text_area("Enter your comment for analysis:")
@@ -130,18 +100,14 @@ if mode == "Single Comment Analysis":
         if not text.strip():
             st.warning("Komentar masih kosong.")
         else:
-            # 1) sentiment
             sent_df = predict_sentiment([text])
             sent_label = sent_df.loc[0, "label_sentimen"]
             conf = float(sent_df.loc[0, "confidence_score"])
 
-            # 2) eucs
             pred_df, labels = predict_eucs([text])
             eucs_labels = labels[0]
 
-            # SHOW RESULTS
             col1, col2 = st.columns(2)
-
             with col1:
                 st.markdown("### 😊 Sentiment Analysis")
                 st.write(f"**Sentiment:** {sent_label.upper()}")
@@ -151,12 +117,10 @@ if mode == "Single Comment Analysis":
             with col2:
                 st.markdown("### 🧾 EUCS Dimensions")
                 if eucs_labels:
-                    for d in eucs_labels:
-                        st.write(f"- {d}")
+                    st.write(", ".join(eucs_labels))
                 else:
                     st.write("- (Tidak terdeteksi dimensi EUCS)")
 
-            # RECOMMENDATIONS
             st.markdown("### 💡 Improvement Recommendations")
             recs = build_recommendations(sent_label, eucs_labels)
             if recs:
@@ -165,15 +129,11 @@ if mode == "Single Comment Analysis":
             else:
                 st.write("Tidak ada rekomendasi karena sentimen tidak negatif.")
 
-# =========================
-# BATCH
-# =========================
 else:
     st.subheader("📊 Batch Analysis from Excel/CSV File")
     file = st.file_uploader("Upload Excel/CSV file with comments", type=["csv", "xlsx"])
 
     if file is not None:
-        # READ FILE
         if file.name.endswith(".csv"):
             data = pd.read_csv(file)
         else:
@@ -182,17 +142,14 @@ else:
         st.write("Preview data:")
         st.dataframe(data.head())
 
-        # pilih kolom teks
         text_col = st.selectbox("Pilih kolom komentar/ulasan:", options=data.columns)
 
         if st.button("Run Batch Analysis"):
             texts = data[text_col].fillna("").astype(str).tolist()
 
-            # sentiment + eucs
             sent_df = predict_sentiment(texts)
             pred_df, labels = predict_eucs(texts)
 
-            # build final result
             result = pd.DataFrame({
                 "ulasan": texts,
                 "label_sentimen": sent_df["label_sentimen"],
@@ -200,11 +157,9 @@ else:
                 "EUCS_Dimensions": [", ".join(l) if l else "-" for l in labels]
             })
 
-            # add binary columns
             for d in DIMS:
                 result[d] = pred_df[d].astype(int)
 
-            # summary
             st.markdown("### Summary")
             total = len(result)
             dist = result["label_sentimen"].value_counts(normalize=True) * 100
